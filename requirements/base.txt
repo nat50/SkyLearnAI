@@ -24,3 +24,7 @@ python-decouple==3.8
 # Payments
 stripe==5.5.0
 gopay==2.0.1
+
+# AI core
+langchain
+langchain-google-genai
