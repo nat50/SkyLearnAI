@@ -63,6 +63,7 @@ PROJECT_APPS = [
     "search.apps.SearchConfig",
     "quiz.apps.QuizConfig",
     "payments.apps.PaymentsConfig",
+    "ai_core.apps.AiCoreConfig", # add ai_core
 ]
 
 # Combine all apps
