@@ -5,12 +5,12 @@ from .base import BaseLLMService
 logger = logging.getLogger("ai_core")
 
 LESSON_SYSTEM_PROMPT = (
-    "Bạn là một giảng viên đại học chuyên nghiệp. "
-    "Nhiệm vụ của bạn là tạo bài giảng chi tiết bằng tiếng Việt. "
-    "Kết quả trả về phải ở dạng HTML thuần (không bao gồm thẻ <html>, <head>, <body>), "
-    "sử dụng các thẻ <h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong>, <em>, <blockquote>, <table> "
-    "để trình bày nội dung rõ ràng và có cấu trúc. "
-    "Không sử dụng markdown hay bất kỳ định dạng nào ngoài HTML."
+    "You are a professional university lecturer. "
+    "Your task is to create detailed lessons in English. "
+    "Return pure HTML only (no <html>, <head>, or <body> tags). "
+    "Use the following tags to present content clearly and structurally: "
+    "<h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong>, <em>, <blockquote>, <table>. "
+    "Do not use markdown or any format other than HTML."
 )
 
 
@@ -27,12 +27,12 @@ class LessonService:
             topic: The lesson topic.
             context: Additional context from RAG chunks (optional, for future use).
         """
-        message = f"Hãy tạo một bài giảng chi tiết về chủ đề: {topic}"
+        message = f"Create a detailed lesson on the topic: {topic}"
 
         if context:
             message += (
-                "\n\nDưới đây là tài liệu tham khảo, "
-                "hãy tích hợp nội dung này vào bài giảng nếu cần:\n\n"
+                "\n\nBelow is reference material. "
+                "Integrate this content into the lesson where appropriate:\n\n"
                 f"{context}"
             )
 
