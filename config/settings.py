@@ -52,6 +52,8 @@ THIRD_PARTY_APPS = [
     "crispy_forms",
     "crispy_bootstrap5",
     "django_filters",
+    "cloudinary_storage",
+    "cloudinary",
 ]
 
 # Custom apps
@@ -272,3 +274,16 @@ SEMESTER_CHOICES = (
     (SECOND, _("Second")),
     (THIRD, _("Third")),
 )
+
+import cloudinary
+
+# Read Cloudinary credentials from .env
+CLOUDINARY_STORAGE = {
+    'CLOUDINARY_URL': config('CLOUDINARY_URL')
+}
+
+# Tell Django to upload all media files to Cloudinary
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.RawMediaCloudinaryStorage'
+
+# Keep your static files (CSS/JS) local for now
+STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
