@@ -4,10 +4,11 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
 from ai_core.services import GeminiService, LessonService, QuizGenerationError, QuizService
+from django.views.decorators.csrf import csrf_exempt
 
 logger = logging.getLogger("ai_core")
 
-
+@csrf_exempt
 @login_required
 @require_http_methods(["POST"])
 def generate_lesson(request):
@@ -33,7 +34,7 @@ def generate_lesson(request):
         logger.error(f"Lesson generation failed: {e}")
         return JsonResponse({"error": "AI service unavailable"}, status=503)
 
-
+@csrf_exempt
 @login_required
 @require_http_methods(["POST"])
 def generate_quiz(request):
