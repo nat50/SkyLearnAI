@@ -4,10 +4,59 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
 from ai_core.services import GeminiService, LessonService, QuizGenerationError, QuizService
+from django.shortcuts import render
+from django.views.decorators.csrf import csrf_exempt
+from ai_core.models import AIGeneration
 
 logger = logging.getLogger("ai_core")
 
+@login_required
+def ai_upload_center(request):
+    """View for the AI Upload Center frontend."""
+    return render(request, "ai_core/ai_upload_center.html")
 
+
+@csrf_exempt
+@login_required
+@require_http_methods(["POST"])
+def process_ai_document(request):
+    """Handle document upload and create AIGeneration records."""
+    if "document_file" not in request.FILES:
+        return JsonResponse({"error": "No file uploaded"}, status=400)
+        
+    uploaded_files = request.FILES.getlist("document_file")
+    ai_goal = request.POST.get("ai_goal", "summarize")
+    detail_level = request.POST.get("detail_level", "standard")
+    output_language = request.POST.get("output_language", "en")
+    
+    # Store settings temporarily in prompt or use as needed later
+    initial_prompt = f"Goal: {ai_goal}, Detail: {detail_level}, Language: {output_language}"
+
+    generated_ids = []
+    try:
+        for uploaded_file in uploaded_files:
+            # Create a new AIGeneration record for each file
+            gen_record = AIGeneration.objects.create(
+                document_file=uploaded_file,
+                prompt=initial_prompt,
+                status="PENDING"
+            )
+            generated_ids.append(gen_record.id)
+            # Note: In a real app, you would trigger a Celery task here:
+            # process_document_task.delay(gen_record.id)
+        
+        return JsonResponse({
+            "status": "success", 
+            "message": f"{len(uploaded_files)} file(s) uploaded successfully",
+            "generation_ids": generated_ids
+        })
+    except Exception as e:
+        logger.error(f"Failed to save AI documents: {e}")
+        return JsonResponse({"error": "Failed to process upload"}, status=500)
+
+
+
+@csrf_exempt
 @login_required
 @require_http_methods(["POST"])
 def generate_lesson(request):
@@ -34,6 +83,7 @@ def generate_lesson(request):
         return JsonResponse({"error": "AI service unavailable"}, status=503)
 
 
+@csrf_exempt
 @login_required
 @require_http_methods(["POST"])
 def generate_quiz(request):
