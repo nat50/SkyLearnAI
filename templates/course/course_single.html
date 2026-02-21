@@ -32,10 +32,7 @@
             </a>
             <a class="btn btn-sm btn-primary" href="{% url 'upload_video' course.slug %}"><i class="fas fa-plus"></i>
                 {% trans 'Upload new video' %}
-            </a>
-             <a class="btn btn-sm" style="background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); border: none; color: white;" href="{% url 'ai_core:ai_upload_center' %}">
-                <i class="fas fa-wand-magic-sparkles"></i> {% trans 'AI Upload Center' %}
-            </a>
+            </a> 
             {% endif %}
         </div>
         <div class="ms-auto">
@@ -55,7 +52,9 @@
 
     <div class="row mb-5">
         <div class="col-md-12 p-0">
-            <p class="form-title m-0">{% trans 'Video Tutorials' %}</p>
+             <div class="d-flex justify-content-between align-items-center text-white p-3 mb-0" style="background-color: #0d6efd; border-radius: 8px 8px 0 0;">
+                <h5 class="m-0 fw-bold">{% trans 'Video Tutorials' %}</h5>
+            </div>
             <div class="table-responsive">
                 <table class="table table-shadow table-light table-striped m-0">
                     <thead>
@@ -131,7 +130,14 @@
 
     <div class="row">
         <div class="col-md-12 p-0">
-            <p class="form-title m-0">{% trans 'Documentations' %}</p>
+            <div class="d-flex justify-content-between align-items-center text-white p-3 mb-0" style="background-color: #0d6efd; border-radius: 8px 8px 0 0;">
+                <h5 class="m-0 fw-bold">{% trans 'Documentations' %}</h5>
+                {% if request.user.is_superuser or request.user.is_lecturer %}
+                <button class="btn btn-light btn-sm text-primary fw-bold" style="border-radius: 20px; padding: 5px 15px;" data-bs-toggle="modal" data-bs-target="#createAILessonModal">
+                    <i class="fas fa-graduation-cap"></i> Tạo Bài Giảng AI
+                </button>
+                {% endif %}
+            </div>
             <div class="table-responsive">
                 <table class="table table-shadow table-light table-striped m-0">
                     <thead>
@@ -185,14 +191,12 @@
                             <td></td>
                             <td>
                                 <span class="text-danger">
-                                    {% trans 'No File Uploaded.' %}
+                                    Chưa có bài giảng.
                                     {% if request.user.is_superuser or request.user.is_lecturer %}
-                                    <a href="{% url 'upload_file_view' course.slug %}" class="text-primary">
-                                        <i class="primary" style="font-size: 22px;">
-                                            {% trans 'Upload now.' %}
-                                        </i>
-                                        {% endif %}
+                                    <a href="#" data-bs-toggle="modal" data-bs-target="#createAILessonModal" class="text-primary" style="text-decoration: none;">
+                                        Tạo bài giảng AI ngay.
                                     </a>
+                                    {% endif %}
                                 </span>
                             </td>
                             <td></td>
@@ -242,5 +246,260 @@
         </div>
     </div>
 </div>
+
+
+<!-- Modal Tạo Bài Giảng Mới -->
+<div class="modal fade" id="createAILessonModal" tabindex="-1" aria-labelledby="createAILessonModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius: 12px; border: none; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
+      <div class="modal-header border-bottom-0 pb-0 mt-3 mx-2">
+        <h5 class="modal-title fw-bold" id="createAILessonModalLabel" style="color: #334155;">Tạo Bài Giảng Mới</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body mx-2">
+        <form id="createAILessonForm">
+            <div class="mb-4">
+                <label for="aiLessonTopic" class="form-label fw-bold" style="color: #475569;">Chủ đề <span class="text-danger">*</span></label>
+                <input type="text" class="form-control form-control-lg" id="aiLessonTopic" placeholder="Nhập chủ đề bài giảng." required style="background-color: #f1f5f9; border: none; font-size: 1rem;">
+            </div>
+            <div class="mb-4">
+                <label for="aiLessonContext" class="form-label fw-bold" style="color: #475569;">Yêu cầu đối với bài giảng </label>
+                <textarea class="form-control form-control-lg" id="aiLessonContext" rows="4" placeholder="Mô tả yêu cầu cụ thể của bạn đối với bài giang do AI tạo." style="background-color: #f1f5f9; border: none; font-size: 1rem; resize: none;"></textarea>
+            </div>
+        </form>
+      </div>
+      <div class="modal-footer border-top-0 pt-0 mb-3 mx-2">
+        <button type="button" class="btn btn-light fw-bold" data-bs-dismiss="modal" style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 24px; color: #475569;">Hủy</button>
+        <button type="button" class="btn btn-primary fw-bold" id="btnSubmitAILesson" style="border-radius: 8px; padding: 10px 24px; background-color: #0d6efd; border: none;">Tạo Bài Giảng</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Preview/Edit -->
+<div class="modal fade" id="previewAILessonModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="border-radius: 12px; border: none; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
+      <div class="modal-header border-bottom-0 align-items-start pb-0 py-4 px-4">
+        <div class="w-100">
+            <div class="d-flex justify-content-between align-items-center">
+                <h4 class="modal-title fw-bold" id="previewModalTitle" style="color: #1e293b;">[Chủ Đề]</h4>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-2 text-muted" id="previewModalSubtitleContainer">
+                <span id="previewModalSubtitleLeft">Kiểm tra và chỉnh sửa bài giảng nếu cần</span>
+                <span id="previewModalSubtitleRight" style="display: none;">Bạn có thể chỉnh sửa bài giảng trực tiếp</span>
+            </div>
+        </div>
+      </div>
+      <div class="modal-body px-4 bg-light mx-4 my-2" style="border-radius: 8px; border: 1px solid #e2e8f0;">
+        <!-- View/Edit Content Area -->
+        <div id="aiLessonViewMode" style="min-height: 400px; padding: 20px; color: #334155; transition: all 0.2s;" spellcheck="false">
+            <!-- Generated HTML goes here -->
+        </div>
+      </div>
+      <div class="modal-footer border-top-0 pt-3 pb-4 px-4 d-flex justify-content-between">
+        <button type="button" class="btn fw-bold" id="btnRecreateAILesson" style="border-radius: 8px; background-color: #f1f5f9; color: #475569;">
+            <i class="fas fa-sync-alt me-1"></i> Tạo Lại Bài Giảng
+        </button>
+        
+        <!-- View Mode Buttons -->
+        <div id="viewModeButtons" style="display: flex; gap: 0.5rem;" class="align-items-center">
+            <button type="button" class="btn fw-bold" id="btnEditAILesson" style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 24px; color: #475569; background-color: white;">Chỉnh Sửa</button>
+            <button type="button" class="btn btn-primary fw-bold" id="btnFinishAILesson" style="border-radius: 8px; padding: 10px 24px; background-color: #2563eb; border: none;">
+                <i class="fas fa-check me-1"></i> Hoàn Thành và Lưu Bài Giảng
+            </button>
+        </div>
+        
+        <!-- Edit Mode Buttons -->
+        <div id="editModeButtons" style="display: none; gap: 0.5rem;" class="align-items-center">
+            <button type="button" class="btn fw-bold" id="btnCancelEditAILesson" style="border-radius: 8px; padding: 10px 24px; color: #475569; background-color: white;">Hủy Chỉnh Sửa</button>
+            <button type="button" class="btn btn-success fw-bold" id="btnSaveEditAILesson" style="border-radius: 8px; padding: 10px 24px;">
+                <i class="fas fa-save me-1"></i> Hoàn Thành Chỉnh Sửa
+            </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const csrfToken = '{{ csrf_token }}';
+    const generateUrl = "{% url 'ai_core:generate_lesson' %}";
+    const saveDocUrl = "{% url 'ai_core:save_lesson_doc' %}";
+    const courseSlug = "{{ course.slug }}";
+
+    const createModalEl = document.getElementById('createAILessonModal');
+    const previewModalEl = document.getElementById('previewAILessonModal');
+    
+    if (!createModalEl || !previewModalEl) return;
+    
+    const createModal = new bootstrap.Modal(createModalEl);
+    const previewModal = new bootstrap.Modal(previewModalEl);
+
+    let currentGeneratedHtml = "";
+
+    document.getElementById('btnSubmitAILesson').addEventListener('click', async function() {
+        const topic = document.getElementById('aiLessonTopic').value.trim();
+        if (!topic) {
+            alert("Vui lòng nhập chủ đề!");
+            return;
+        }
+        const context = document.getElementById('aiLessonContext').value.trim();
+        
+        // UI Loading state
+        const btn = this;
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang tạo...';
+        btn.disabled = true;
+
+        try {
+            const response = await fetch(generateUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({
+                    topic: topic,
+                    context: context
+                })
+            });
+
+            const data = await response.json();
+            
+            if (response.ok) {
+                currentGeneratedHtml = data.content;
+                
+                // Set data in preview modal
+                document.getElementById('previewModalTitle').innerText = data.topic || topic;
+                
+                // Revert view mode
+                switchToViewMode();
+                updatePreviewContent(currentGeneratedHtml);
+                
+                // Hide create modal, show preview modal
+                createModal.hide();
+                previewModal.show();
+            } else {
+                alert(data.error || "Có lỗi xảy ra khi tạo bài giảng.");
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Không thể kết nối với server. Vui lòng thử lại.");
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    });
+
+    function updatePreviewContent(htmlContent) {
+        document.getElementById('aiLessonViewMode').innerHTML = htmlContent;
+    }
+
+    const editorDiv = document.getElementById('aiLessonViewMode');
+
+    function switchToEditMode() {
+        editorDiv.contentEditable = "true";
+        editorDiv.style.backgroundColor = "#fff";
+        editorDiv.style.border = "2px dashed #94a3b8";
+        editorDiv.style.borderRadius = "8px";
+        editorDiv.focus();
+        
+        document.getElementById('btnRecreateAILesson').style.display = 'none';
+        document.getElementById('viewModeButtons').style.display = 'none';
+        document.getElementById('editModeButtons').style.display = 'flex';
+        
+        document.getElementById('previewModalSubtitleLeft').innerText = 'Chỉnh sửa trực tiếp trên văn bản (Rich Text)';
+        document.getElementById('previewModalSubtitleRight').style.display = 'none';
+        
+        // Place cursor at the end
+        if (window.getSelection) {
+            const range = document.createRange();
+            const sel = window.getSelection();
+            range.selectNodeContents(editorDiv);
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+    }
+
+    function switchToViewMode() {
+        editorDiv.contentEditable = "false";
+        editorDiv.style.backgroundColor = "transparent";
+        editorDiv.style.border = "none";
+        
+        document.getElementById('editModeButtons').style.display = 'none';
+        document.getElementById('btnRecreateAILesson').style.display = 'block';
+        document.getElementById('viewModeButtons').style.display = 'flex';
+        
+        document.getElementById('previewModalSubtitleLeft').innerText = 'Kiểm tra và chỉnh sửa bài giảng nếu cần';
+        document.getElementById('previewModalSubtitleRight').style.display = 'none';
+    }
+
+    document.getElementById('btnEditAILesson').addEventListener('click', switchToEditMode);
+    
+    document.getElementById('btnCancelEditAILesson').addEventListener('click', function() {
+        editorDiv.innerHTML = currentGeneratedHtml; // revert changes
+        switchToViewMode();
+    });
+
+    document.getElementById('btnSaveEditAILesson').addEventListener('click', function() {
+        currentGeneratedHtml = editorDiv.innerHTML;
+        switchToViewMode();
+    });
+
+    document.getElementById('btnRecreateAILesson').addEventListener('click', function() {
+        previewModal.hide();
+        setTimeout(() => createModal.show(), 400); // allow backdrop animation 
+    });
+
+    document.getElementById('btnFinishAILesson').addEventListener('click', async function() {
+        if (!currentGeneratedHtml) {
+            alert("Không có nội dung bài giảng để lưu.");
+            return;
+        }
+
+        const btn = this;
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang lưu...';
+        btn.disabled = true;
+
+        const topic = document.getElementById('previewModalTitle').innerText;
+
+        try {
+            const response = await fetch(saveDocUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({
+                    course_slug: courseSlug,
+                    topic: topic,
+                    html_content: currentGeneratedHtml
+                })
+            });
+
+            const data = await response.json();
+            
+            if (response.ok) {
+                alert("Bài giảng đã được thiết kế và lưu vào thành công!");
+                previewModal.hide();
+                window.location.reload(); // Reload to show the new document in the list
+            } else {
+                alert(data.error || "Có lỗi xảy ra khi lưu bài giảng.");
+            }
+        } catch (err) {
+            console.error(err);
+            alert("Không thể kết nối với server. Vui lòng thử lại.");
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    });
+});
+</script>
 
 {% endblock content %}
