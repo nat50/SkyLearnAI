@@ -1,12 +1,19 @@
 import json
 import logging
+from io import BytesIO
+import os
+from django.conf import settings
+from django.core.files.base import ContentFile
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
 from ai_core.services import GeminiService, LessonService, QuizGenerationError, QuizService
-from django.shortcuts import render
+from course.models import Course, Upload
+from django.shortcuts import get_object_or_404, render
 from django.views.decorators.csrf import csrf_exempt
 from ai_core.models import AIGeneration
+from docx import Document
+from htmldocx import HtmlToDocx
 
 logger = logging.getLogger("ai_core")
 
@@ -72,3 +79,50 @@ def generate_quiz(request):
     except Exception as e:
         logger.error(f"Quiz generation error: {e}")
         return JsonResponse({"error": "AI service unavailable"}, status=503)
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["POST"])
+def save_lesson_doc(request):
+    """Convert generated lesson HTML to Word (.docx) and save to Course Documents."""
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+        
+    course_slug = data.get("course_slug")
+    topic = data.get("topic")
+    html_content = data.get("html_content")
+    
+    if not all([course_slug, topic, html_content]):
+        return JsonResponse({"error": "Missing required fields"}, status=400)
+        
+    course = get_object_or_404(Course, slug=course_slug)
+    
+    # Generate DOCX
+    document = Document()
+    document.add_heading(f"Bài giảng: {topic}", 0)
+    
+    # Parse HTML and append to document
+    new_parser = HtmlToDocx()
+    new_parser.add_html_to_document(html_content, document)
+    
+    # Save the Document to a stream
+    result = BytesIO()
+    document.save(result)
+    
+    # Save the DOCX to the database
+    file_name = f"bai_giang_ai_{topic.replace(' ', '_')[:30]}.docx"
+    
+    upload = Upload.objects.create(
+        title=f"AI Lesson: {topic}",
+        course=course,
+    )
+    # Save file content
+    upload.file.save(file_name, ContentFile(result.getvalue()))
+    
+    return JsonResponse({
+        "status": "success",
+        "message": "Lesson saved successfully to Course Documents"
+    })
