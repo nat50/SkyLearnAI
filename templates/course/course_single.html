@@ -271,8 +271,8 @@
                 <input type="text" class="form-control form-control-lg" id="aiLessonTopic" placeholder="Enter lesson topic." required style="background-color: #f1f5f9; border: none; font-size: 1rem;">
             </div>
             <div class="mb-4">
-                <label for="aiLessonContext" class="form-label fw-bold" style="color: #475569;">Requirements </label>
-                <textarea class="form-control form-control-lg" id="aiLessonContext" rows="4" placeholder="Describe your specific requirements for the lesson." style="background-color: #f1f5f9; border: none; font-size: 1rem; resize: none;"></textarea>
+                <label for="aiLessonRequirements" class="form-label fw-bold" style="color: #475569;">Requirements </label>
+                <textarea class="form-control form-control-lg" id="aiLessonRequirements" rows="4" placeholder="Describe your specific requirements for the lesson." style="background-color: #f1f5f9; border: none; font-size: 1rem; resize: none;"></textarea>
             </div>
         </form>
       </div>
@@ -371,8 +371,8 @@ document.addEventListener('DOMContentLoaded', function() {
             alert("Please enter a topic!");
             return;
         }
-        const context = document.getElementById('aiLessonContext').value.trim();
-        
+        const requirements = document.getElementById('aiLessonRequirements').value.trim();
+
         // UI Loading state
         const btn = this;
         const originalText = btn.innerHTML;
@@ -388,7 +388,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 },
                 body: JSON.stringify({
                     topic: topic,
-                    context: context
+                    requirements: requirements
                 })
             });
 

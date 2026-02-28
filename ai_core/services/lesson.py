@@ -21,18 +21,22 @@ class LessonService:
     def __init__(self, llm_service: BaseLLMService):
         self.llm_service = llm_service
 
-    def generate(self, topic: str, context: str = None) -> str:
+    def generate(self, topic: str, requirements: str = None, context: str = None) -> str:
         """Generate an HTML lesson for the given topic.
 
         Args:
             topic: The lesson topic.
+            requirements: User-specified requirements for the lesson (optional).
             context: Additional context from RAG chunks (optional, for future use).
         """
         message = f"Create a detailed lesson on the topic: {topic}"
 
+        if requirements:
+            message += f"\n\nRequirements:\n{requirements}"
+
         if context:
             message += (
-                "\n\nBelow is reference material. "
+                "\n\nBelow is reference material retrieved from the knowledge base. "
                 "Integrate this content into the lesson where appropriate:\n\n"
                 f"{context}"
             )

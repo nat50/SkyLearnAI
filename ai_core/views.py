@@ -31,13 +31,13 @@ def generate_lesson(request):
     if not topic:
         return JsonResponse({"error": "Topic is required"}, status=400)
 
-    # Optional RAG context (placeholder for future use)
+    requirements = data.get("requirements", None)
     context = data.get("context", None)
 
     try:
         llm = GeminiService()
         service = LessonService(llm)
-        html_content = service.generate(topic, context)
+        html_content = service.generate(topic, requirements=requirements, context=context)
         return JsonResponse({"topic": topic, "content": html_content})
     except Exception as e:
         logger.error(f"Lesson generation failed: {e}")
