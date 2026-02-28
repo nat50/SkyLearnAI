@@ -102,7 +102,7 @@ def save_lesson_doc(request):
     
     # Generate DOCX
     document = Document()
-    document.add_heading(f"Bài giảng: {topic}", 0)
+    document.add_heading(f"Lesson: {topic}", 0)
     
     # Parse HTML and append to document
     new_parser = HtmlToDocx()
@@ -113,16 +113,29 @@ def save_lesson_doc(request):
     document.save(result)
     
     # Save the DOCX to the database
-    file_name = f"bai_giang_ai_{topic.replace(' ', '_')[:30]}.docx"
+    file_name = f"lesson_{topic.replace(' ', '_')[:30]}.docx"
     
     upload = Upload.objects.create(
         title=f"AI Lesson: {topic}",
         course=course,
+        html_content=html_content,
     )
-    # Save file content
     upload.file.save(file_name, ContentFile(result.getvalue()))
     
     return JsonResponse({
         "status": "success",
         "message": "Lesson saved successfully to Course Documents"
+    })
+
+
+@login_required
+@require_http_methods(["GET"])
+def get_lesson_html(request, upload_id):
+    """Return the stored HTML content for a generated lesson."""
+    upload = get_object_or_404(Upload, pk=upload_id)
+    if not upload.html_content:
+        return JsonResponse({"error": "No HTML content available"}, status=404)
+    return JsonResponse({
+        "title": upload.title,
+        "html_content": upload.html_content,
     })

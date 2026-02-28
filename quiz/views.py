@@ -347,7 +347,7 @@ def generate_ai_questions(request, slug, quiz_id):
 
     num_questions = int(request.GET.get("num", 5))
 
-    # Lấy nội dung làm context
+    # Use quiz description/title as context
     lesson_content = quiz.description or quiz.title
 
     try:

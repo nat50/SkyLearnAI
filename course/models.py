@@ -123,6 +123,7 @@ class CourseAllocation(models.Model):
 class Upload(models.Model):
     title = models.CharField(max_length=100)
     course = models.ForeignKey(Course, on_delete=models.CASCADE)
+    html_content = models.TextField(null=True, blank=True)
     file = models.FileField(
         upload_to="course_files/",
         help_text=_(
