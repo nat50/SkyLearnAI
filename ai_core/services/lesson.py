@@ -10,7 +10,8 @@ LESSON_SYSTEM_PROMPT = (
     "Return pure HTML only (no <html>, <head>, or <body> tags). "
     "Use the following tags to present content clearly and structurally: "
     "<h2>, <h3>, <p>, <ul>, <ol>, <li>, <strong>, <em>, <blockquote>, <table>. "
-    "Do not use markdown or any format other than HTML."
+    "Do not use markdown or any format other than HTML. "
+    "Do not include any inline CSS style attributes, especially font-family or font-size."
 )
 
 
