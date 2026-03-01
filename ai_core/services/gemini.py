@@ -10,5 +10,5 @@ class GeminiService(BaseLLMService):
     def _build_llm(self):
         return ChatGoogleGenerativeAI(
             google_api_key=config("GOOGLE_API_KEY"),
-            model="gemini-2.5-flash",
+            model="gemini-3-flash-preview",
         )
