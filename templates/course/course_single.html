@@ -274,6 +274,22 @@
                 <label for="aiLessonRequirements" class="form-label fw-bold" style="color: #475569;">Requirements </label>
                 <textarea class="form-control form-control-lg" id="aiLessonRequirements" rows="4" placeholder="Describe your specific requirements for the lesson." style="background-color: #f1f5f9; border: none; font-size: 1rem; resize: none;"></textarea>
             </div>
+            <div class="mb-4">
+                <label class="form-label fw-bold" style="color: #475569;">Reference Documents</label>
+                <p class="text-muted small mb-2">Select documents to use as reference material for this lesson.</p>
+                <div style="max-height: 180px; overflow-y: auto; background-color: #f1f5f9; border-radius: 8px; padding: 12px;">
+                    {% for file in files %}
+                    <div class="form-check mb-1">
+                        <input class="form-check-input rag-doc-check" type="checkbox" value="{{ file.pk }}" id="ragDoc{{ file.pk }}">
+                        <label class="form-check-label" for="ragDoc{{ file.pk }}" style="font-size: 0.9rem;">
+                            <i class="fas fa-file-{{ file.get_extension_short }} me-1 text-muted"></i> {{ file.title }}
+                        </label>
+                    </div>
+                    {% empty %}
+                    <p class="text-muted small mb-0">No documents uploaded yet.</p>
+                    {% endfor %}
+                </div>
+            </div>
         </form>
       </div>
       <div class="modal-footer border-top-0 pt-0 mb-3 mx-2">
@@ -388,7 +404,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 },
                 body: JSON.stringify({
                     topic: topic,
-                    requirements: requirements
+                    requirements: requirements,
+                    upload_ids: Array.from(document.querySelectorAll('.rag-doc-check:checked')).map(cb => parseInt(cb.value))
                 })
             });
 

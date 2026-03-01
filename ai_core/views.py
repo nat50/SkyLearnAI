@@ -8,10 +8,11 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
 from ai_core.services import GeminiService, LessonService, QuizGenerationError, QuizService
+from ai_core.services.rag import embed_and_store_chunks, search_chunks
+from ai_core.models import AIGeneration, DocumentChunk
 from course.models import Course, Upload
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.csrf import csrf_exempt
-from ai_core.models import AIGeneration
 from docx import Document
 from htmldocx import HtmlToDocx
 
@@ -21,7 +22,11 @@ logger = logging.getLogger("ai_core")
 @login_required
 @require_http_methods(["POST"])
 def generate_lesson(request):
-    """Generate a lesson in HTML format for a given topic."""
+    """Generate a lesson in HTML format for a given topic.
+
+    Optionally uses RAG to enrich the prompt with content from
+    user-selected course documents (specified via upload_ids).
+    """
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -32,7 +37,23 @@ def generate_lesson(request):
         return JsonResponse({"error": "Topic is required"}, status=400)
 
     requirements = data.get("requirements", None)
-    context = data.get("context", None)
+    upload_ids = data.get("upload_ids", [])
+
+    # --- RAG: retrieve context from selected documents ---
+    context = None
+    if upload_ids:
+        try:
+            # Lazy indexing: parse and embed only if not already done
+            for uid in upload_ids:
+                embed_and_store_chunks(uid)
+
+            # Semantic search within the selected documents
+            context = search_chunks(query=topic, upload_ids=upload_ids, top_k=3)
+            if not context:
+                logger.info("RAG returned no relevant chunks for topic: %s", topic)
+        except Exception as e:
+            logger.error("RAG processing failed, proceeding without context: %s", e)
+            context = None
 
     try:
         llm = GeminiService()

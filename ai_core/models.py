@@ -22,3 +22,37 @@ class AIGeneration(models.Model):
 
     error_message = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class DocumentChunk(models.Model):
+    """Cached text chunk with embedding vector from an uploaded document.
+
+    Each Upload can have many chunks. Chunks are created lazily when a
+    document is first selected as RAG context for lesson generation.
+    Deleting the parent Upload cascades to remove all its chunks.
+    """
+
+    upload = models.ForeignKey(
+        "course.Upload",
+        on_delete=models.CASCADE,
+        related_name="chunks",
+    )
+    chunk_index = models.IntegerField(
+        help_text="Zero-based position of this chunk within the document."
+    )
+    content = models.TextField(
+        help_text="Plain text content of this chunk."
+    )
+    embedding = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Embedding vector as a JSON list of floats.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["upload", "chunk_index"]
+        unique_together = ["upload", "chunk_index"]
+
+    def __str__(self) -> str:
+        return f"Chunk {self.chunk_index} of Upload #{self.upload_id}"
