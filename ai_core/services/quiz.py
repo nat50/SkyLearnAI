@@ -9,7 +9,7 @@ logger = logging.getLogger("ai_core")
 
 QUIZ_SYSTEM_PROMPT = (
     "You are an expert educator who creates multiple-choice quiz questions. "
-    "Based on the lesson content provided, generate quiz questions in English.\n\n"
+    "Based on the lesson content provided, create detailed quizzes in the same language as the topic or context provided..\n\n"
     "RULES:\n"
     "1. Return ONLY a valid JSON array, no markdown, no explanation outside JSON.\n"
     "2. Each element must have exactly these fields:\n"
