@@ -11,6 +11,7 @@ crispy-bootstrap5==0.7  # https://github.com/django-crispy-forms/crispy-bootstra
 django-filter==23.5 # https://github.com/carltongibson/django-filter
 django-modeltranslation==0.18.11 # https://github.com/Buren/django-modeltranslation
 
+
 # PDF generator
 reportlab==4.0.4
 xhtml2pdf==0.2.15
@@ -28,3 +29,7 @@ gopay==2.0.1
 # AI core
 langchain
 langchain-google-genai
+
+#Cloudinary
+psycopg2-binary dj-database-url
+cloudinary django-cloudinary-storage

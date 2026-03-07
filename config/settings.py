@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/2.2/ref/settings/
 import os
 from decouple import config
 from django.utils.translation import gettext_lazy as _
+import cloudinary
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -275,15 +276,12 @@ SEMESTER_CHOICES = (
     (THIRD, _("Third")),
 )
 
-import cloudinary
-
 # Read Cloudinary credentials from .env
 CLOUDINARY_STORAGE = {
-    'CLOUDINARY_URL': config('CLOUDINARY_URL')
+    'CLOUD_NAME': config('CLOUDINARY_CLOUD_NAME'),
+    'API_KEY': config('CLOUDINARY_API_KEY'),
+    'API_SECRET': config('CLOUDINARY_API_SECRET'),
 }
 
 # Tell Django to upload all media files to Cloudinary
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.RawMediaCloudinaryStorage'
-
-# Keep your static files (CSS/JS) local for now
-STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
