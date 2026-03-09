@@ -55,8 +55,10 @@
     <script type="text/javascript" src="{% static 'js/main.js' %}"></script>
 
     {% if user.is_authenticated %}
-    {% include 'snippets/chatbot_widget.html' %}
-    <script type="text/javascript" src="{% static 'js/chatbot.js' %}"></script>
+        {% if request.resolver_match.url_name != 'quiz_take' %}
+            {% include 'snippets/chatbot_widget.html' %}
+            <script type="text/javascript" src="{% static 'js/chatbot.js' %}"></script>
+        {% endif %}
     {% endif %}
 
     {% block js %}
