@@ -7,7 +7,7 @@ from django.core.files.base import ContentFile
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
-from ai_core.services import GeminiService, LessonService, QuizGenerationError, QuizService
+from ai_core.services import GeminiService, LessonService, QuizGenerationError, QuizService, ChatbotService
 from ai_core.services.rag import embed_and_store_chunks, search_chunks
 from ai_core.models import AIGeneration, DocumentChunk
 from course.models import Course, Upload
@@ -160,3 +160,29 @@ def get_lesson_html(request, upload_id):
         "title": upload.title,
         "html_content": upload.html_content,
     })
+
+
+@csrf_exempt
+@login_required
+@require_http_methods(["POST"])
+def chatbot_reply(request):
+    """Return an AI chatbot reply for the user's message."""
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    message = data.get("message", "").strip()
+    if not message:
+        return JsonResponse({"error": "message is required"}, status=400)
+
+    history = data.get("history", [])
+
+    try:
+        llm = GeminiService()
+        service = ChatbotService(llm)
+        reply = service.reply(message, history=history)
+        return JsonResponse({"reply": reply})
+    except Exception as e:
+        logger.error(f"Chatbot error: {e}")
+        return JsonResponse({"error": "AI service unavailable"}, status=503)
