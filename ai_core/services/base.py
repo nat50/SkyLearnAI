@@ -1,34 +1,32 @@
-"""Simple Gemini AI Service using LangChain"""
-import os
+"""Base LLM service interface."""
 import logging
-from decouple import config
-from langchain_google_genai import ChatGoogleGenerativeAI
+from abc import ABC, abstractmethod
 from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger("ai_core")
 
 
-class GeminiService:
-    """Simple Gemini AI service."""
-    
+class BaseLLMService(ABC):
+    """Abstract base for all LLM providers."""
+
+    @abstractmethod
+    def _build_llm(self):
+        """Return a LangChain chat model instance."""
+        pass
+
     def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(
-            google_api_key=config("GOOGLE_API_KEY"),
-            model="gemini-2.5-flash",
-        )
-        logger.info("GeminiService initialized")
-    
+        self.llm = self._build_llm()
+        logger.info(f"{self.__class__.__name__} initialized")
+
     def chat(self, message: str, system_prompt: str = None) -> str:
-        """Send message to Gemini and get response."""
+        """Send a message and return the response text."""
         messages = []
         if system_prompt:
             messages.append(SystemMessage(content=system_prompt))
         messages.append(HumanMessage(content=message))
-        
+
         logger.info(f"[REQUEST] {message[:100]}...")
-        
         response = self.llm.invoke(messages)
-        
         logger.info(f"[RESPONSE] {response.content[:200]}...")
-        
+
         return response.content
