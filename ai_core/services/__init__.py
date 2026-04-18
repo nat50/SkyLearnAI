@@ -1,6 +1,7 @@
 from .base import BaseLLMService
 from .gemini import GeminiService
 from .lesson import LessonService
+from .yolo_farm_lesson import YoloFarmLessonService
 from .quiz import QuizGenerationError, QuizService
 from .chatbot import ChatbotService
 from .document_parser import extract_text, chunk_text

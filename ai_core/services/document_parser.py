@@ -38,7 +38,7 @@ def extract_text(file_path: str) -> str:
 
 
 def chunk_text(
-    text: str, chunk_size: int = 1000, overlap: int = 50
+    text: str, chunk_size: int = 4000, overlap: int = 200
 ) -> list[str]:
     """Split text into overlapping chunks for embedding.
 

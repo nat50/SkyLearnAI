@@ -7,7 +7,7 @@ from django.core.files.base import ContentFile
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
-from ai_core.services import GeminiService, LessonService, QuizGenerationError, QuizService, ChatbotService
+from ai_core.services import GeminiService, LessonService, YoloFarmLessonService, QuizGenerationError, QuizService, ChatbotService
 from ai_core.services.rag import embed_and_store_chunks, search_chunks
 from ai_core.models import AIGeneration, DocumentChunk
 from course.models import Course, Upload
@@ -26,6 +26,9 @@ def generate_lesson(request):
 
     Optionally uses RAG to enrich the prompt with content from
     user-selected course documents (specified via upload_ids).
+    When is_yolo_farm is True, the pipeline switches to the
+    YoloFarmLessonService and automatically uses the Yolo:Farm
+    textbook PDF as RAG context.
     """
     try:
         data = json.loads(request.body)
@@ -38,28 +41,79 @@ def generate_lesson(request):
 
     requirements = data.get("requirements", None)
     upload_ids = data.get("upload_ids", [])
+    is_yolo_farm = data.get("is_yolo_farm", False)
 
     # --- RAG: retrieve context from selected documents ---
     context = None
-    if upload_ids:
+
+    if is_yolo_farm:
+        # Auto-find the Yolo:Farm textbook PDF for RAG context
+        try:
+            yolo_uploads = Upload.objects.filter(
+                file__icontains="YoloFarm"
+            ).values_list("pk", flat=True)
+            if not yolo_uploads:
+                yolo_uploads = Upload.objects.filter(
+                    title__icontains="YoloFarm"
+                ).values_list("pk", flat=True)
+            if yolo_uploads:
+                yolo_ids = list(yolo_uploads)
+                for uid in yolo_ids:
+                    embed_and_store_chunks(uid)
+                context = search_chunks(
+                    query=topic, upload_ids=yolo_ids, top_k=20
+                )
+                logger.info(
+                    "YOLO Farm RAG: found %d uploads, context length=%d",
+                    len(yolo_ids),
+                    len(context) if context else 0,
+                )
+            else:
+                logger.warning(
+                    "No Yolo:Farm textbook found in uploads; "
+                    "generating without RAG context."
+                )
+        except Exception as e:
+            logger.error(
+                "YOLO Farm RAG processing failed: %s", e
+            )
+            context = None
+    elif upload_ids:
         try:
             # Lazy indexing: parse and embed only if not already done
             for uid in upload_ids:
                 embed_and_store_chunks(uid)
 
             # Semantic search within the selected documents
-            context = search_chunks(query=topic, upload_ids=upload_ids, top_k=3)
+            context = search_chunks(
+                query=topic, upload_ids=upload_ids, top_k=3
+            )
             if not context:
-                logger.info("RAG returned no relevant chunks for topic: %s", topic)
+                logger.info(
+                    "RAG returned no relevant chunks for topic: %s",
+                    topic,
+                )
         except Exception as e:
-            logger.error("RAG processing failed, proceeding without context: %s", e)
+            logger.error(
+                "RAG processing failed, proceeding without context: %s",
+                e,
+            )
             context = None
 
     try:
         llm = GeminiService()
-        service = LessonService(llm)
-        html_content = service.generate(topic, requirements=requirements, context=context)
-        return JsonResponse({"topic": topic, "content": html_content})
+        if is_yolo_farm:
+            service = YoloFarmLessonService(llm)
+        else:
+            service = LessonService(llm)
+        html_content = service.generate(
+            topic, requirements=requirements, context=context
+        )
+        return JsonResponse({
+            "topic": topic,
+            "content": html_content,
+            "is_yolo_farm": is_yolo_farm,
+        })
     except Exception as e:
         logger.error(f"Lesson generation failed: {e}")
         return JsonResponse({"error": "AI service unavailable"}, status=503)

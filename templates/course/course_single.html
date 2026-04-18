@@ -271,6 +271,19 @@
                 <input type="text" class="form-control form-control-lg" id="aiLessonTopic" placeholder="Enter lesson topic." required style="background-color: #f1f5f9; border: none; font-size: 1rem;">
             </div>
             <div class="mb-4">
+                <div class="yolo-farm-toggle-wrapper" id="yoloFarmToggleWrapper">
+                    <span class="toggle-icon">🌾</span>
+                    <div style="flex: 1;">
+                        <div class="toggle-label">Bài giảng YOLO Farm</div>
+                        <div class="toggle-desc">Bài giảng sẽ dựa trên giáo trình YOLO Farm AIoT với code tương tác</div>
+                    </div>
+                    <label class="yolo-toggle-switch">
+                        <input type="checkbox" id="yoloFarmToggle">
+                        <span class="yolo-toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="mb-4">
                 <label for="aiLessonRequirements" class="form-label fw-bold" style="color: #475569;">Requirements </label>
                 <textarea class="form-control form-control-lg" id="aiLessonRequirements" rows="4" placeholder="Describe your specific requirements for the lesson." style="background-color: #f1f5f9; border: none; font-size: 1rem; resize: none;"></textarea>
             </div>
@@ -381,6 +394,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let currentGeneratedHtml = "";
 
+    // YOLO Farm toggle handler
+    const yoloFarmToggle = document.getElementById('yoloFarmToggle');
+    const yoloFarmWrapper = document.getElementById('yoloFarmToggleWrapper');
+    let isYoloFarmMode = false;
+
+    if (yoloFarmToggle && yoloFarmWrapper) {
+        yoloFarmToggle.addEventListener('change', function() {
+            isYoloFarmMode = this.checked;
+            if (isYoloFarmMode) {
+                yoloFarmWrapper.classList.add('active');
+            } else {
+                yoloFarmWrapper.classList.remove('active');
+            }
+        });
+    }
+
     document.getElementById('btnSubmitAILesson').addEventListener('click', async function() {
         const topic = document.getElementById('aiLessonTopic').value.trim();
         if (!topic) {
@@ -405,6 +434,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: JSON.stringify({
                     topic: topic,
                     requirements: requirements,
+                    is_yolo_farm: isYoloFarmMode,
                     upload_ids: Array.from(document.querySelectorAll('.rag-doc-check:checked')).map(cb => parseInt(cb.value))
                 })
             });
@@ -415,11 +445,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentGeneratedHtml = data.content;
                 
                 // Set data in preview modal
-                document.getElementById('previewModalTitle').innerText = data.topic || topic;
+                const titleEl = document.getElementById('previewModalTitle');
+                titleEl.innerText = data.topic || topic;
+                
+                // Show YOLO Farm badge in preview title if applicable
+                if (data.is_yolo_farm) {
+                    titleEl.innerHTML = titleEl.innerText + ' <span class="yolo-farm-badge">🌾 YOLO Farm</span>';
+                }
                 
                 // Revert view mode
                 switchToViewMode();
                 updatePreviewContent(currentGeneratedHtml);
+                
+                // Transform code blocks into interactive editors
+                if (window.YoloFarm) {
+                    window.YoloFarm.transformCodeBlocks(document.getElementById('aiLessonViewMode'));
+                }
                 
                 // Hide create modal, show preview modal
                 createModal.hide();
@@ -516,6 +557,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (response.ok) {
                     titleEl.innerText = data.title;
                     contentEl.innerHTML = data.html_content;
+                    // Transform code blocks for saved YOLO Farm lessons
+                    if (window.YoloFarm) {
+                        window.YoloFarm.transformCodeBlocks(contentEl);
+                    }
                 } else {
                     contentEl.innerHTML = '<p class="text-danger">Unable to load lesson content.</p>';
                 }
