@@ -106,6 +106,14 @@ def generate_lesson(request):
             service = YoloFarmLessonService(llm)
         else:
             service = LessonService(llm)
+        
+        # Log context being used
+        if context:
+            logger.info(f"Generating lesson with context: {len(context)} chars")
+            logger.debug(f"Context preview: {context[:500]}...")
+        else:
+            logger.warning(f"Generating lesson WITHOUT context for topic: {topic}")
+        
         html_content = service.generate(
             topic, requirements=requirements, context=context
         )

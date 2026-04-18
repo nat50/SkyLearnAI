@@ -284,5 +284,6 @@ CLOUDINARY_STORAGE = {
     'API_SECRET': config('CLOUDINARY_API_SECRET'),
 }
 
-# Tell Django to upload all media files to Cloudinary
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.RawMediaCloudinaryStorage'
+# Tell Django to upload all media files using default FileSystemStorage
+# DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+# (using default FileSystemStorage which stores in MEDIA_ROOT)

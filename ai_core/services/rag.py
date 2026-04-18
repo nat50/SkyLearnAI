@@ -70,6 +70,9 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 def embed_and_store_chunks(upload_id: int) -> int:
     """Parse a document, chunk it, embed the chunks, and store in the database.
+    
+    Streams text extraction from the file without saving to disk, then
+    deletes the original file after chunks are created.
 
     This function is idempotent — if chunks already exist for the given
     upload, it skips processing entirely (lazy indexing).
@@ -85,35 +88,66 @@ def embed_and_store_chunks(upload_id: int) -> int:
         return 0
 
     upload = Upload.objects.get(pk=upload_id)
-    file_path = upload.file.path
-
-    # Extract and chunk text
-    raw_text = extract_text(file_path)
+    
+    # Stream extract text from file object (no temp file needed)
+    if not upload.file:
+        logger.warning("Upload %d has no file attached", upload_id)
+        return 0
+    
+    # Open file object for extraction
+    try:
+        upload.file.open('rb')
+        raw_text = extract_text(upload.file)
+        upload.file.close()
+    except Exception as e:
+        logger.error("Failed to extract text from upload %d: %s", upload_id, e)
+        return 0
+    
     if not raw_text:
-        logger.warning("No text extracted from upload %d (%s)", upload_id, file_path)
+        logger.warning("No text extracted from upload %d", upload_id)
+        # Delete file since it's useless
+        upload.file.delete(save=False)
         return 0
 
     chunks = chunk_text(raw_text)
     if not chunks:
         logger.warning("No chunks generated from upload %d", upload_id)
+        # Delete file since it's useless
+        upload.file.delete(save=False)
         return 0
 
-    # Batch embed all chunks in one API call
-    logger.info("Embedding %d chunks for upload %d", len(chunks), upload_id)
-    vectors = embed_texts(chunks)
+    # Batch embed chunks in smaller groups to avoid large requests
+    batch_size = 20
+    logger.info("Embedding %d chunks for upload %d using batch_size=%d", len(chunks), upload_id, batch_size)
 
-    # Bulk create chunk records
-    chunk_objects = [
-        DocumentChunk(
-            upload_id=upload_id,
-            chunk_index=i,
-            content=content,
-            embedding=vector,
+    chunk_objects = []
+    for start in range(0, len(chunks), batch_size):
+        batch = chunks[start : start + batch_size]
+        logger.info(
+            "Embedding chunk batch %d-%d for upload %d",
+            start,
+            min(start + batch_size, len(chunks)) - 1,
+            upload_id,
         )
-        for i, (content, vector) in enumerate(zip(chunks, vectors))
-    ]
+        vectors = embed_texts(batch)
+        chunk_objects.extend(
+            DocumentChunk(
+                upload_id=upload_id,
+                chunk_index=i,
+                content=content,
+                embedding=vector,
+            )
+            for i, (content, vector) in enumerate(
+                zip(batch, vectors), start=start
+            )
+        )
+
     DocumentChunk.objects.bulk_create(chunk_objects)
     logger.info("Stored %d chunks for upload %d", len(chunk_objects), upload_id)
+    
+    # Delete the original file after successful chunking and embedding
+    logger.info("Deleting original file for upload %d (chunks stored in DB)", upload_id)
+    upload.file.delete(save=False)
 
     return len(chunk_objects)
 
@@ -135,7 +169,7 @@ def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
 def search_chunks(
     query: str,
     upload_ids: list[int],
-    top_k: int = 3,
+    top_k: int = 10,
 ) -> str:
     """Find the most relevant document chunks for a given query.
 
@@ -182,5 +216,9 @@ def search_chunks(
         len(scored),
         len(top_chunks),
     )
+    
+    # Log the top chunks for debugging
+    for i, chunk in enumerate(top_chunks, 1):
+        logger.debug(f"Top chunk {i}: {chunk[:200]}...")
 
     return "\n\n---\n\n".join(top_chunks)
