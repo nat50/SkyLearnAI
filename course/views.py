@@ -7,6 +7,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.decorators import method_decorator
 from django.views.generic import CreateView
 from django_filters.views import FilterView
+import threading
+import logging
 
 from accounts.decorators import lecturer_required, student_required
 from accounts.models import Student
@@ -28,6 +30,8 @@ from course.models import (
     UploadVideo,
 )
 from result.models import TakenCourse
+
+logger = logging.getLogger("course")
 
 
 # ########################################################
@@ -271,6 +275,22 @@ def handle_file_upload(request, slug):
             upload.course = course
             upload.save()
             messages.success(request, f"{upload.title} has been uploaded.")
+            
+            # Process document asynchronously: extract text -> chunk -> embed -> delete file
+            def process_document():
+                try:
+                    from ai_core.services.rag import embed_and_store_chunks
+                    chunk_count = embed_and_store_chunks(upload.id)
+                    logger = logging.getLogger("course")
+                    logger.info(f"Document {upload.id} processed: {chunk_count} chunks created")
+                except Exception as e:
+                    logger = logging.getLogger("course")
+                    logger.error(f"Failed to process document {upload.id}: {e}", exc_info=True)
+            
+            # Run in background thread so user gets immediate feedback
+            thread = threading.Thread(target=process_document, daemon=True)
+            thread.start()
+            
             return redirect("course_detail", slug=slug)
         messages.error(request, "Correct the error(s) below.")
     else:
