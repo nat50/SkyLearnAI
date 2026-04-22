@@ -1,656 +1,269 @@
 /**
- * YOLO Farm – Interactive Code Runner with Virtual Yolo:Bit Board
+ * YOLO Farm – Real MicroPython Code Editor + Web Serial Import
  *
  * Transforms static code blocks inside lessons into interactive editors
- * with a visual hardware simulator (5x5 LED matrix, buttons, sensors, LCD).
- * Code is executed in the browser via Pyodide (Python → WebAssembly).
+ * with two upload modes (REPL / main.py) and a live Serial Monitor.
+ * Code is uploaded directly to a physical Yolo:Bit board via Web Serial API.
  */
 
 (function () {
     "use strict";
 
-    // ── Pyodide Singleton ────────────────────────────────────────────────
+    // ── Web Serial Manager (Singleton) ──────────────────────────────────
 
-    let pyodideInstance = null;
-    let pyodideLoading = false;
-    const PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.27.5/full/pyodide.js";
+    const SerialManager = {
+        _port: null,
+        _reader: null,
+        _writer: null,
+        _readLoopActive: false,
+        _monitorCallbacks: [],   // [{id, callback}]
+        _statusCallbacks: [],    // [{id, callback}]
+        _decoder: new TextDecoder(),
+        _encoder: new TextEncoder(),
 
-    function getOrCreateLoadingOverlay() {
-        let overlay = document.getElementById("pyodideLoadingOverlay");
-        if (!overlay) {
-            overlay = document.createElement("div");
-            overlay.id = "pyodideLoadingOverlay";
-            overlay.className = "pyodide-loading-overlay";
-            overlay.innerHTML =
-                '<div class="pyodide-loading-spinner"></div>' +
-                '<div class="pyodide-loading-text">Đang khởi tạo Python Runtime...</div>' +
-                '<div class="pyodide-loading-subtext">Tải xuống lần đầu (~11 MB), các lần sau sẽ nhanh hơn</div>';
-            document.body.appendChild(overlay);
-        }
-        return overlay;
-    }
+        /** Check browser support for Web Serial API. */
+        isSupported() {
+            return "serial" in navigator;
+        },
 
-    function showLoadingOverlay() {
-        const o = getOrCreateLoadingOverlay();
-        requestAnimationFrame(() => o.classList.add("visible"));
-    }
+        /** Whether a port is currently open. */
+        isConnected() {
+            return this._port !== null && this._port.readable !== null;
+        },
 
-    function hideLoadingOverlay() {
-        const o = document.getElementById("pyodideLoadingOverlay");
-        if (o) o.classList.remove("visible");
-    }
+        /** Get the underlying SerialPort. */
+        getPort() {
+            return this._port;
+        },
 
-    async function ensurePyodide() {
-        if (pyodideInstance) return pyodideInstance;
-        if (pyodideLoading) {
-            return new Promise((resolve) => {
-                const interval = setInterval(() => {
-                    if (pyodideInstance) {
-                        clearInterval(interval);
-                        resolve(pyodideInstance);
-                    }
-                }, 200);
-            });
-        }
+        /**
+         * Prompt the user to select a serial port and open it.
+         * Returns true on success, false on failure/cancel.
+         */
+        async connect() {
+            if (this.isConnected()) return true;
 
-        pyodideLoading = true;
-        showLoadingOverlay();
-
-        try {
-            await new Promise((resolve, reject) => {
-                if (window.loadPyodide) { resolve(); return; }
-                const script = document.createElement("script");
-                script.src = PYODIDE_CDN;
-                script.onload = resolve;
-                script.onerror = () => reject(new Error("Failed to load Pyodide CDN"));
-                document.head.appendChild(script);
-            });
-            pyodideInstance = await window.loadPyodide();
-            console.log("[YoloFarm] Pyodide initialised");
-        } catch (err) {
-            console.error("[YoloFarm] Pyodide init error:", err);
-            throw err;
-        } finally {
-            pyodideLoading = false;
-            hideLoadingOverlay();
-        }
-        return pyodideInstance;
-    }
-
-    // ── Virtual Board Builder ────────────────────────────────────────────
-
-    /**
-     * Build the Yolo:Bit simulator HTML and return the DOM element plus
-     * references to interactive parts (LEDs, LCD, buttons, sliders).
-     */
-    function createBoardElement(dataset) {
-        const col = document.createElement("div");
-        col.className = "yolo-sim-board-col";
-
-        // Build LED cells
-        let ledCells = "";
-        for (let i = 0; i < 25; i++) {
-            ledCells += '<div class="yolo-led" data-led="' + i + '"></div>';
-        }
-
-        // --- Parse Dynamic Configuration ---
-        let sensors = [];
-        if (dataset && dataset.sensors) {
-            try { sensors = JSON.parse(dataset.sensors); } catch (e) { console.warn("YoloFarm JSON parse error (sensors)"); }
-        }
-        if (sensors.length === 0) {
-            // Default sensors if AI didn't provide any
-            sensors = [
-                { pin: 0, name: "Ánh sáng", min: 0, max: 4095, val: 450 },
-                { pin: 1, name: "Độ ẩm đất", min: 0, max: 4095, val: 120 },
-                { pin: 2, name: "Nhiệt độ", min: 0, max: 4095, val: 300 }
-            ];
-        }
-
-        let actuators = [];
-        if (dataset && dataset.actuators) {
-            try { actuators = JSON.parse(dataset.actuators); } catch (e) { console.warn("YoloFarm JSON parse error (actuators)"); }
-        }
-
-        // --- Build Sensors UI ---
-        let sensorsHtml = '<div class="yolo-sensors"><div class="yolo-sensor-help">💡 Kéo thanh trượt rồi nhấn <strong>Run</strong> để thay đổi giá trị</div>';
-        sensors.forEach(s => {
-            const min = s.min !== undefined ? s.min : 0;
-            const max = s.max !== undefined ? s.max : 4095;
-            const val = s.val !== undefined ? s.val : (s.value !== undefined ? s.value : Math.floor((min + max) / 2));
-            sensorsHtml += `
-                <div class="yolo-sensor-row">
-                    <span class="yolo-sensor-label">P${s.pin}</span>
-                    <span class="yolo-sensor-desc" title="${s.name}">${s.name}</span>
-                    <input type="range" class="yolo-sensor-slider" data-sensor="${s.pin}" min="${min}" max="${max}" value="${val}">
-                    <span class="yolo-sensor-value" data-sensor-val="${s.pin}">${val}</span>
-                </div>
-            `;
-        });
-        sensorsHtml += '</div>';
-
-        // --- Build Actuators UI ---
-        let actuatorsHtml = '';
-        if (actuators.length > 0) {
-            actuatorsHtml = '<div class="yolo-actuators"><div class="yolo-actuator-title">Thiết bị ngoại vi</div>';
-            actuators.forEach(a => {
-                let icon = '⚡';
-                if (a.type === 'fan' || a.name.toLowerCase().includes('quạt')) icon = '🌪️';
-                else if (a.type === 'pump' || a.name.toLowerCase().includes('bơm') || a.name.toLowerCase().includes('tưới')) icon = '💧';
-                else if (a.type === 'light' || a.type === 'led' || a.name.toLowerCase().includes('đèn')) icon = '💡';
-                else if (a.type === 'servo' || a.name.toLowerCase().includes('servo')) icon = '🔄';
-
-                actuatorsHtml += `
-                    <div class="yolo-actuator-item" data-actuator-pin="${a.pin}" data-actuator-type="${a.type || 'generic'}">
-                        <div class="yolo-actuator-icon">${icon}</div>
-                        <div class="yolo-actuator-info">
-                            <div class="yolo-actuator-name">${a.name} (P${a.pin})</div>
-                            <div class="yolo-actuator-status" data-actuator-status="${a.pin}">OFF</div>
-                        </div>
-                    </div>
-                `;
-            });
-            actuatorsHtml += '</div>';
-        }
-
-        col.innerHTML =
-            '<div class="yolo-board">' +
-            '  <div class="yolo-board-label">Yolo:Bit Simulator</div>' +
-            '  <div class="yolo-board-chip">' +
-            '    <div class="yolo-led-matrix">' + ledCells + '</div>' +
-            '    <div class="yolo-buttons-row">' +
-            '      <div class="yolo-hw-btn" data-btn="a" title="Nhấn giữ rồi click Run để mô phỏng nhấn nút A">A</div>' +
-            '      <div class="yolo-board-usb"></div>' +
-            '      <div class="yolo-hw-btn" data-btn="b" title="Nhấn giữ rồi click Run để mô phỏng nhấn nút B">B</div>' +
-            '    </div>' +
-            '    <div class="yolo-lcd" data-lcd></div>' +
-            '    <div class="yolo-pin-indicators">' +
-            '      <div class="yolo-pin-dot"><div class="yolo-pin-dot-light" data-pin="0"></div><span>P0</span></div>' +
-            '      <div class="yolo-pin-dot"><div class="yolo-pin-dot-light" data-pin="1"></div><span>P1</span></div>' +
-            '      <div class="yolo-pin-dot"><div class="yolo-pin-dot-light" data-pin="2"></div><span>P2</span></div>' +
-            '    </div>' +
-            '  </div>' +
-            sensorsHtml +
-            actuatorsHtml +
-            '</div>';
-
-        // Wire slider labels
-        col.querySelectorAll(".yolo-sensor-slider").forEach(function (sl) {
-            const idx = sl.dataset.sensor;
-            const valEl = col.querySelector('[data-sensor-val="' + idx + '"]');
-            sl.addEventListener("input", function () {
-                if (valEl) valEl.textContent = sl.value;
-            });
-        });
-
-        // Wire button press state
-        col.querySelectorAll(".yolo-hw-btn").forEach(function (btn) {
-            btn.addEventListener("click", function () {
-                btn.classList.toggle("pressed");
-            });
-        });
-
-        return col;
-    }
-
-    /**
-     * Collect the current UI state of a board element so we can inject
-     * the values into Pyodide before executing user code.
-     */
-    function getBoardState(boardEl) {
-        let sensorVals = {};
-        boardEl.querySelectorAll(".yolo-sensor-slider").forEach(function (sl) {
-            sensorVals[sl.dataset.sensor] = parseFloat(sl.value);
-        });
-
-        const btnA = boardEl.querySelector('[data-btn="a"]');
-        const btnB = boardEl.querySelector('[data-btn="b"]');
-        
-        return {
-            sensors: sensorVals,
-            btnA: btnA ? btnA.classList.contains("pressed") : false,
-            btnB: btnB ? btnB.classList.contains("pressed") : false,
-        };
-    }
-
-    /**
-     * Push execution results back into the visual board.
-     * Called after Pyodide finishes running user code.
-     */
-    function updateBoardVisuals(boardEl, pyodide) {
-        try {
-            // LED matrix state
-            const ledData = pyodide.runPython(
-                "_yolo_board_state.get('leds', [0]*25)"
-            );
-            const leds = boardEl.querySelectorAll(".yolo-led");
-            const ledArray = ledData.toJs ? ledData.toJs() : [];
-            leds.forEach(function (el, i) {
-                const v = ledArray[i] || 0;
-                el.classList.remove("on", "on-green", "on-blue");
-                if (v > 0) el.classList.add("on");
-            });
-
-            // LCD text
-            const lcdText = pyodide.runPython(
-                "_yolo_board_state.get('lcd', '')"
-            );
-            const lcd = boardEl.querySelector("[data-lcd]");
-            if (lcd) lcd.textContent = lcdText || "";
-
-            // Pin write indicators
-            const pinWrites = pyodide.runPython(
-                "_yolo_board_state.get('pin_writes', {})"
-            );
-            const pinMap = pinWrites.toJs ? Object.fromEntries(pinWrites.toJs()) : {};
-            boardEl.querySelectorAll(".yolo-pin-dot-light").forEach(function (el) {
-                const pin = el.dataset.pin;
-                if (pin in pinMap) {
-                    el.classList.add("active");
-                } else {
-                    el.classList.remove("active");
-                }
-            });
-
-            // Update Dynamic Actuators
-            boardEl.querySelectorAll(".yolo-actuator-item").forEach(function (el) {
-                const pin = el.dataset.actuatorPin;
-                const statusEl = el.querySelector(".yolo-actuator-status");
-                if (pin in pinMap) {
-                    const v = pinMap[pin];
-                    if (v > 0) {
-                        el.classList.add("active");
-                        if (statusEl) statusEl.textContent = "ON";
-                    } else {
-                        el.classList.remove("active");
-                        if (statusEl) statusEl.textContent = "OFF";
-                    }
-                }
-            });
-        } catch (e) {
-            console.warn("[YoloFarm] Board visual update skipped:", e);
-        }
-    }
-
-    function resetBoardVisuals(boardEl) {
-        boardEl.querySelectorAll(".yolo-led").forEach(function (el) {
-            el.classList.remove("on", "on-green", "on-blue");
-        });
-        const lcd = boardEl.querySelector("[data-lcd]");
-        if (lcd) lcd.textContent = "";
-        boardEl.querySelectorAll(".yolo-pin-dot-light").forEach(function (el) {
-            el.classList.remove("active");
-        });
-        boardEl.querySelectorAll(".yolo-actuator-item").forEach(function (el) {
-            el.classList.remove("active");
-            const statusEl = el.querySelector(".yolo-actuator-status");
-            if (statusEl) statusEl.textContent = "OFF";
-        });
-    }
-
-    // ── Code Execution ───────────────────────────────────────────────────
-
-    /**
-     * Execute Python code with mock Yolo:Bit environment.
-     * boardState contains sensor slider values and button states from the UI.
-     */
-    async function runPythonCode(code, boardState) {
-        const pyodide = await ensurePyodide();
-        const st = boardState || {};
-        const sensorsJson = JSON.stringify(st.sensors || {});
-        const btn_a_val = st.btnA ? "True" : "False";
-        const btn_b_val = st.btnB ? "True" : "False";
-
-        const py_setup = `
-import sys, io, types, time, random
-
-# ── Board state bridge (Python ↔ JS UI) ──
-_yolo_board_state = {
-    'leds': [0] * 25,
-    'lcd': '',
-    'pin_writes': {},
-}
-
-# ── Custom exception to break infinite loops ──
-class _YoloLoopBreak(Exception):
-    pass
-
-# ── LED Image patterns (5x5 bitmaps) ──
-_IMAGE_PATTERNS = {
-    'HAPPY':    [0,0,0,0,0,
-                 0,1,0,1,0,
-                 0,0,0,0,0,
-                 1,0,0,0,1,
-                 0,1,1,1,0],
-    'SAD':      [0,0,0,0,0,
-                 0,1,0,1,0,
-                 0,0,0,0,0,
-                 0,1,1,1,0,
-                 1,0,0,0,1],
-    'HEART':    [0,1,0,1,0,
-                 1,1,1,1,1,
-                 1,1,1,1,1,
-                 0,1,1,1,0,
-                 0,0,1,0,0],
-    'SMILE':    [0,0,0,0,0,
-                 0,1,0,1,0,
-                 0,0,0,0,0,
-                 1,0,0,0,1,
-                 0,1,1,1,0],
-    'ANGRY':    [1,0,0,0,1,
-                 0,1,0,1,0,
-                 0,0,0,0,0,
-                 1,1,1,1,1,
-                 1,0,1,0,1],
-    'CONFUSED': [0,0,0,0,0,
-                 0,1,0,1,0,
-                 0,0,0,0,0,
-                 0,1,0,1,0,
-                 1,0,1,0,1],
-    'ASLEEP':   [0,0,0,0,0,
-                 1,1,0,1,1,
-                 0,0,0,0,0,
-                 0,1,1,1,0,
-                 0,0,0,0,0],
-    'SURPRISED':[0,1,0,1,0,
-                 0,0,0,0,0,
-                 0,0,1,0,0,
-                 0,1,0,1,0,
-                 0,0,1,0,0],
-    'SKULL':    [0,1,1,1,0,
-                 1,0,1,0,1,
-                 1,1,1,1,1,
-                 0,1,0,1,0,
-                 0,1,1,1,0],
-    'DIAMOND':  [0,0,1,0,0,
-                 0,1,0,1,0,
-                 1,0,0,0,1,
-                 0,1,0,1,0,
-                 0,0,1,0,0],
-    'DUCK':     [0,1,1,0,0,
-                 1,1,1,0,0,
-                 0,1,1,1,1,
-                 0,1,1,1,0,
-                 0,0,0,0,0],
-    'ARROW_N':  [0,0,1,0,0,
-                 0,1,1,1,0,
-                 1,0,1,0,1,
-                 0,0,1,0,0,
-                 0,0,1,0,0],
-    'ARROW_S':  [0,0,1,0,0,
-                 0,0,1,0,0,
-                 1,0,1,0,1,
-                 0,1,1,1,0,
-                 0,0,1,0,0],
-    'ARROW_E':  [0,0,1,0,0,
-                 0,0,0,1,0,
-                 1,1,1,1,1,
-                 0,0,0,1,0,
-                 0,0,1,0,0],
-    'ARROW_W':  [0,0,1,0,0,
-                 0,1,0,0,0,
-                 1,1,1,1,1,
-                 0,1,0,0,0,
-                 0,0,1,0,0],
-    'YES':      [0,0,0,0,0,
-                 0,0,0,0,1,
-                 0,0,0,1,0,
-                 1,0,1,0,0,
-                 0,1,0,0,0],
-    'NO':       [1,0,0,0,1,
-                 0,1,0,1,0,
-                 0,0,1,0,0,
-                 0,1,0,1,0,
-                 1,0,0,0,1],
-}
-
-# ── Mock Yolo:Bit modules ──
-# Always recreate module internals so slider values are fresh
-if 'yolobit' not in sys.modules:
-    _mock_yolobit = types.ModuleType('yolobit')
-    sys.modules['yolobit'] = _mock_yolobit
-else:
-    _mock_yolobit = sys.modules['yolobit']
-
-class _MockPin:
-    def __init__(self, name, analog_val):
-        self._name = name
-        self._analog = analog_val
-    def read_analog(self):
-        return self._analog
-    def read_digital(self):
-        return 1 if self._analog > 500 else 0
-    def write_analog(self, v):
-        _yolo_board_state['pin_writes'][self._name.replace('P', '')] = v
-        print(f"[PIN] {self._name} ← analog {v}")
-    def write_digital(self, v):
-        _yolo_board_state['pin_writes'][self._name.replace('P', '')] = v
-        print(f"[PIN] {self._name} ← digital {v}")
-
-# Load dynamic sensors mapping
-import json
-try:
-    _sensor_vals = json.loads('${sensorsJson}')
-except:
-    _sensor_vals = {}
-
-# Map ALL pins to slider values based on real Yolo:Bit usage + dynamic mapping
-_pin_slider_map = {
-    0: _sensor_vals.get("0", 450),
-    1: _sensor_vals.get("1", 120),
-    2: _sensor_vals.get("2", 300),
-    4: _sensor_vals.get("4", _sensor_vals.get("0", 450)),
-    5: _sensor_vals.get("5", _sensor_vals.get("1", 120)),
-    6: _sensor_vals.get("6", _sensor_vals.get("2", 300)),
-    10: _sensor_vals.get("10", _sensor_vals.get("0", 450)),
-    13: _sensor_vals.get("13", _sensor_vals.get("1", 120)),
-    14: _sensor_vals.get("14", _sensor_vals.get("2", 300)),
-    15: _sensor_vals.get("15", _sensor_vals.get("0", 450)),
-    16: _sensor_vals.get("16", _sensor_vals.get("1", 120)),
-}
-
-for _i in range(0, 21):
-    _val = _sensor_vals.get(str(_i), None)
-    if _val is None:
-        _val = _pin_slider_map.get(_i, random.randint(0, 4095))
-    setattr(_mock_yolobit, f'pin{_i}', _MockPin(f'P{_i}', int(_val)))
-
-class _MockDisplay:
-    def scroll(self, text):
-        _yolo_board_state['lcd'] = str(text)
-        print(f"[LCD] ← {text}")
-    def show(self, img=None):
-        if img is not None:
-            name = str(img)
-            if name in _IMAGE_PATTERNS:
-                _yolo_board_state['leds'] = list(_IMAGE_PATTERNS[name])
-            else:
-                _yolo_board_state['leds'] = [1] * 25
-            _yolo_board_state['lcd'] = name
-            print(f"[LED] Hiển thị hình: {name}")
-        else:
-            _yolo_board_state['leds'] = [1] * 25
-    def set_pixel(self, x, y, val=9):
-        idx = y * 5 + x
-        if 0 <= idx < 25:
-            _yolo_board_state['leds'][idx] = val
-    def clear(self):
-        _yolo_board_state['leds'] = [0] * 25
-        _yolo_board_state['lcd'] = ''
-        print("[LED] Đã tắt toàn bộ LED")
-
-_mock_yolobit.display = _MockDisplay()
-
-class _MockButton:
-    def __init__(self, pressed):
-        self._pressed = pressed
-    def is_pressed(self):
-        return self._pressed
-    def was_pressed(self):
-        return self._pressed
-
-_mock_yolobit.button_a = _MockButton(${btn_a_val})
-_mock_yolobit.button_b = _MockButton(${btn_b_val})
-
-class Image:
-    HAPPY = "HAPPY"
-    SAD = "SAD"
-    HEART = "HEART"
-    ARROW_N = "ARROW_N"
-    ARROW_S = "ARROW_S"
-    ARROW_E = "ARROW_E"
-    ARROW_W = "ARROW_W"
-    YES = "YES"
-    NO = "NO"
-    SMILE = "SMILE"
-    CONFUSED = "CONFUSED"
-    ANGRY = "ANGRY"
-    ASLEEP = "ASLEEP"
-    SURPRISED = "SURPRISED"
-    SKULL = "SKULL"
-    DIAMOND = "DIAMOND"
-    DUCK = "DUCK"
-_mock_yolobit.Image = Image
-
-_mock_yolobit.__all__ = [k for k in dir(_mock_yolobit) if not k.startswith('_')]
-
-# ── Mock MQTT / IoT ──
-if 'mqtt' not in sys.modules:
-    _mock_mqtt = types.ModuleType('mqtt')
-    sys.modules['mqtt'] = _mock_mqtt
-else:
-    _mock_mqtt = sys.modules['mqtt']
-
-class _MockMQTTClient:
-    def __init__(self, *a, **kw): pass
-    def connect(self):
-        print("[MQTT] Đã kết nối broker")
-    def publish(self, topic, msg):
-        print(f"[MQTT] Gửi → {topic}: {msg}")
-    def check_msg(self): pass
-    def subscribe(self, topic):
-        print(f"[MQTT] Đăng ký topic: {topic}")
-_mock_mqtt.MQTTClient = _MockMQTTClient
-
-if 'iot_client' not in sys.modules:
-    _mock_iot = types.ModuleType('iot_client')
-    sys.modules['iot_client'] = _mock_iot
-else:
-    _mock_iot = sys.modules['iot_client']
-_mock_iot.mqtt = _MockMQTTClient()
-_mock_iot.MQTTClient = _MockMQTTClient
-
-# ── Mock DHT20 sensor (values driven by slider P2) ──
-if 'dht' not in sys.modules:
-    _mock_dht = types.ModuleType('dht')
-    sys.modules['dht'] = _mock_dht
-else:
-    _mock_dht = sys.modules['dht']
-
-class _MockDHT20:
-    def __init__(self, *a, **kw):
-        p2_val = _pin_slider_map.get(2, 300)
-        p1_val = _pin_slider_map.get(1, 120)
-        self._temp = round(15.0 + (int(p2_val) / 4095.0) * 30.0, 1)
-        self._hum = round(30.0 + (int(p1_val) / 4095.0) * 60.0, 1)
-    def measure(self): pass
-    def temperature(self):
-        return self._temp
-    def humidity(self):
-        return self._hum
-_mock_dht.DHT20 = _MockDHT20
-
-# ── Mock relay / actuator module ──
-if 'actuator' not in sys.modules:
-    _mock_act = types.ModuleType('actuator')
-    sys.modules['actuator'] = _mock_act
-else:
-    _mock_act = sys.modules['actuator']
-
-class _MockRelay:
-    def __init__(self, pin):
-        self._pin = pin
-        self._state = False
-    def on(self):
-        self._state = True
-        _yolo_board_state['pin_writes'][f'relay_{self._pin}'] = 1
-        print(f"[RELAY] Pin {self._pin}: BẬT ⚡")
-    def off(self):
-        self._state = False
-        _yolo_board_state['pin_writes'][f'relay_{self._pin}'] = 0
-        print(f"[RELAY] Pin {self._pin}: TẮT")
-    def toggle(self):
-        if self._state:
-            self.off()
-        else:
-            self.on()
-_mock_act.Relay = _MockRelay
-
-# ── Prevent infinite loops (reset counter every run) ──
-_yolo_loop_count = 0
-_yolo_max_loops = 5
-
-def _safe_sleep(x):
-    global _yolo_loop_count
-    _yolo_loop_count += 1
-    if _yolo_loop_count > _yolo_max_loops:
-        raise _YoloLoopBreak("Vòng lặp đã dừng sớm để tránh đơ web!")
-
-time.sleep = _safe_sleep
-
-# ── Capture stdout/stderr ──
-_yolo_stdout = io.StringIO()
-_yolo_stderr = io.StringIO()
-sys.stdout = _yolo_stdout
-sys.stderr = _yolo_stderr
-`;
-
-        let error = false;
-        let output = "";
-
-        // Combine setup + user code into a single runPython call so that
-        // `from yolobit import *` correctly injects names into the same
-        // global namespace where the user code executes.
-        const combinedCode = py_setup + "\n" + code;
-
-        try {
-            const result = pyodide.runPython(combinedCode);
-            output = pyodide.runPython("_yolo_stdout.getvalue()");
-            const errOutput = pyodide.runPython("_yolo_stderr.getvalue()");
-            if (errOutput) output += (output ? "\n" : "") + errOutput;
-            if (!output && result !== undefined && result !== null) {
-                const repr = String(result);
-                if (repr !== "None") output = repr;
-            }
-        } catch (err) {
-            console.error("[YoloFarm] Run code error:", err);
-            const errStr = (err.message || String(err)).replace(/^PythonError:\s*/i, "");
-
-            if (errStr.includes("_YoloLoopBreak") || errStr.includes("Vòng lặp")) {
-                try {
-                    const partialOutput = pyodide.runPython("_yolo_stdout.getvalue()");
-                    output = partialOutput || "";
-                } catch (pe) { output = ""; }
-                output += "\n⏹ Đã dừng vòng lặp sau vài lần chạy thử.";
-            } else {
-                error = true;
-                output = errStr;
-            }
-        } finally {
             try {
-                pyodide.runPython("sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__");
-            } catch (fe) {}
+                this._port = await navigator.serial.requestPort();
+                await this._port.open({ baudRate: 115200 });
+                this._notifyStatus("connected");
+                this._startReadLoop();
+                return true;
+            } catch (err) {
+                console.error("[YoloFarm] Serial connect error:", err);
+                this._port = null;
+                this._notifyStatus("error", err.message);
+                return false;
+            }
+        },
+
+        /** Close the serial connection. */
+        async disconnect() {
+            this._readLoopActive = false;
+            try {
+                if (this._reader) {
+                    await this._reader.cancel();
+                    this._reader.releaseLock();
+                    this._reader = null;
+                }
+                if (this._port) {
+                    await this._port.close();
+                }
+            } catch (e) {
+                console.warn("[YoloFarm] Disconnect warning:", e);
+            }
+            this._port = null;
+            this._notifyStatus("disconnected");
+        },
+
+        /** Register a callback for serial data. Returns an id to unregister. */
+        onData(callback) {
+            const id = Math.random().toString(36).slice(2, 10);
+            this._monitorCallbacks.push({ id, callback });
+            return id;
+        },
+
+        /** Unregister a data callback. */
+        offData(id) {
+            this._monitorCallbacks = this._monitorCallbacks.filter(c => c.id !== id);
+        },
+
+        /** Register a callback for connection status changes. */
+        onStatus(callback) {
+            const id = Math.random().toString(36).slice(2, 10);
+            this._statusCallbacks.push({ id, callback });
+            return id;
+        },
+
+        /** Unregister a status callback. */
+        offStatus(id) {
+            this._statusCallbacks = this._statusCallbacks.filter(c => c.id !== id);
+        },
+
+        _notifyStatus(status, detail) {
+            this._statusCallbacks.forEach(c => c.callback(status, detail));
+        },
+
+        _notifyData(text) {
+            this._monitorCallbacks.forEach(c => c.callback(text));
+        },
+
+        /** Continuously read from the serial port and dispatch to callbacks. */
+        async _startReadLoop() {
+            if (!this._port || !this._port.readable) return;
+            this._readLoopActive = true;
+
+            while (this._readLoopActive && this._port && this._port.readable) {
+                try {
+                    this._reader = this._port.readable.getReader();
+                    while (this._readLoopActive) {
+                        const { value, done } = await this._reader.read();
+                        if (done) break;
+                        if (value) {
+                            const text = this._decoder.decode(value);
+                            this._notifyData(text);
+                        }
+                    }
+                } catch (err) {
+                    if (this._readLoopActive) {
+                        console.warn("[YoloFarm] Read loop error:", err);
+                    }
+                } finally {
+                    try {
+                        if (this._reader) {
+                            this._reader.releaseLock();
+                            this._reader = null;
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+            }
+        },
+
+        /**
+         * Write raw bytes to the serial port.
+         * Acquires and releases the writer lock for each call.
+         */
+        async _write(data) {
+            if (!this._port || !this._port.writable) {
+                throw new Error("Serial port not writable");
+            }
+            const writer = this._port.writable.getWriter();
+            try {
+                if (typeof data === "string") {
+                    await writer.write(this._encoder.encode(data));
+                } else {
+                    await writer.write(data);
+                }
+            } finally {
+                writer.releaseLock();
+            }
+        },
+
+        /** Small delay helper. */
+        _sleep(ms) {
+            return new Promise(r => setTimeout(r, ms));
+        },
+    };
+
+
+    // ── Code Uploader ───────────────────────────────────────────────────
+
+    /**
+     * Upload code to the Yolo:Bit board via Raw REPL mode.
+     *
+     * Flow:
+     *   1. Ctrl+C Ctrl+C – interrupt any running program
+     *   2. Ctrl+A         – enter Raw REPL mode
+     *   3. Send code bytes (in chunks to avoid buffer overflow)
+     *   4. Ctrl+D         – execute the code
+     */
+    async function sendViaREPL(code) {
+        if (!SerialManager.isConnected()) {
+            const ok = await SerialManager.connect();
+            if (!ok) throw new Error("Không thể kết nối board. Kiểm tra cáp USB và thử lại.");
         }
 
-        return { output: output || "(Không có output)", error };
+        // Interrupt + enter Raw REPL
+        await SerialManager._write("\x03\x03");  // Ctrl+C x2
+        await SerialManager._sleep(100);
+        await SerialManager._write("\x01");       // Ctrl+A → raw REPL
+        await SerialManager._sleep(100);
+
+        // Send code in chunks (256 bytes each to be safe)
+        const CHUNK = 256;
+        for (let i = 0; i < code.length; i += CHUNK) {
+            const chunk = code.slice(i, i + CHUNK);
+            await SerialManager._write(chunk);
+            await SerialManager._sleep(20);
+        }
+
+        // Execute
+        await SerialManager._write("\x04");       // Ctrl+D → execute
+        await SerialManager._sleep(50);
     }
 
-    // ── Code Block Transformer ───────────────────────────────────────────
+    /**
+     * Upload code as main.py to the Yolo:Bit board.
+     *
+     * Flow:
+     *   1. Enter Raw REPL
+     *   2. Send a Python script that writes the user code to main.py
+     *   3. Execute the file-writing script
+     *   4. Soft-reset the board so main.py runs automatically
+     */
+    async function sendAsMainPy(code) {
+        if (!SerialManager.isConnected()) {
+            const ok = await SerialManager.connect();
+            if (!ok) throw new Error("Không thể kết nối board. Kiểm tra cáp USB và thử lại.");
+        }
+
+        // Escape the user code for embedding in a Python string
+        const escaped = code
+            .replace(/\\/g, "\\\\")
+            .replace(/'/g, "\\'")
+            .replace(/\n/g, "\\n");
+
+        const writeScript =
+            "import machine\n" +
+            "f = open('main.py', 'w')\n" +
+            "f.write('" + escaped + "')\n" +
+            "f.close()\n" +
+            "print('[YoloBit] main.py saved successfully!')\n";
+
+        // Interrupt + enter Raw REPL
+        await SerialManager._write("\x03\x03");
+        await SerialManager._sleep(100);
+        await SerialManager._write("\x01");
+        await SerialManager._sleep(100);
+
+        // Send the file-writing script
+        const CHUNK = 256;
+        for (let i = 0; i < writeScript.length; i += CHUNK) {
+            const chunk = writeScript.slice(i, i + CHUNK);
+            await SerialManager._write(chunk);
+            await SerialManager._sleep(20);
+        }
+
+        // Execute the write script
+        await SerialManager._write("\x04");
+        await SerialManager._sleep(500);
+
+        // Soft reset to run main.py
+        await SerialManager._write("\x03\x03");
+        await SerialManager._sleep(100);
+        await SerialManager._write("\x04");       // Ctrl+D in normal REPL = soft reset
+        await SerialManager._sleep(100);
+    }
+
+
+    // ── Code Block Transformer ──────────────────────────────────────────
 
     function transformCodeBlocks(container) {
         if (!container) return;
         const blocks = container.querySelectorAll(".yolo-code-block");
         if (!blocks.length) return;
+
+        const webSerialSupported = SerialManager.isSupported();
 
         blocks.forEach(function (block) {
             if (block.dataset.transformed === "true") return;
@@ -660,20 +273,28 @@ sys.stderr = _yolo_stderr
             if (!codeEl) return;
 
             const originalCode = codeEl.textContent.trim();
-            const codeId = block.dataset.codeId || "block_" + Math.random().toString(36).slice(2, 8);
 
-            // ── Clear and rebuild ────────────────────────────────────────
+            // ── Clear and rebuild ────────────────────────────────────
             block.innerHTML = "";
 
             // Toolbar
             const toolbar = document.createElement("div");
             toolbar.className = "code-toolbar";
+
+            let actionsHtml =
+                '<button class="btn-copy-code" title="Sao chép code">📋 Copy</button>' +
+                '<button class="btn-reset-code" title="Khôi phục code gốc">↺ Reset</button>';
+
+            if (webSerialSupported) {
+                actionsHtml +=
+                    '<button class="btn-import-repl" title="Chạy code trực tiếp trên board (mất khi reset)">▶ REPL</button>' +
+                    '<button class="btn-import-main" title="Ghi vào main.py (chạy tự động khi bật board)">💾 Main</button>' +
+                    '<button class="btn-monitor" title="Mở/đóng Serial Monitor">📟 Monitor</button>';
+            }
+
             toolbar.innerHTML =
-                '<span class="code-lang-label">Python · Yolo:Bit</span>' +
-                '<span class="code-actions">' +
-                '  <button class="btn-reset-code" title="Khôi phục code gốc">↺ Reset</button>' +
-                '  <button class="btn-run-code" title="Chạy code">▶ Run</button>' +
-                "</span>";
+                '<span class="code-lang-label">MicroPython · Yolo:Bit</span>' +
+                '<span class="code-actions">' + actionsHtml + '</span>';
             block.appendChild(toolbar);
 
             // Editor textarea
@@ -695,124 +316,221 @@ sys.stderr = _yolo_stderr
             editorWrapper.appendChild(textarea);
             block.appendChild(editorWrapper);
 
-            // ── Simulator container (output + board side by side) ────────
-            const simContainer = document.createElement("div");
-            simContainer.className = "yolo-sim-container";
-            simContainer.style.display = "none";
+            // Upload progress bar
+            const progressEl = document.createElement("div");
+            progressEl.className = "upload-progress";
+            progressEl.innerHTML = '<div class="progress-bar"></div>';
+            block.appendChild(progressEl);
 
-            // Output column
-            const outputCol = document.createElement("div");
-            outputCol.className = "yolo-sim-output-col";
-            const outputPanel = document.createElement("div");
-            outputPanel.className = "code-output";
-            outputPanel.style.borderTop = "none"; // container handles border
-            outputPanel.innerHTML =
-                '<div class="output-header">' +
-                '  <span class="output-label">Output</span>' +
-                '  <span class="output-status"></span>' +
-                "</div>" +
-                '<pre class="output-content"></pre>';
-            outputCol.appendChild(outputPanel);
-            simContainer.appendChild(outputCol);
+            // Web Serial unsupported banner
+            if (!webSerialSupported) {
+                const banner = document.createElement("div");
+                banner.className = "webserial-unsupported";
+                banner.innerHTML =
+                    '<span class="unsupported-icon">⚠️</span>' +
+                    '<span>Trình duyệt không hỗ trợ Web Serial. ' +
+                    'Sử dụng <a href="https://www.google.com/chrome/" target="_blank">Chrome</a> ' +
+                    'hoặc <a href="https://www.microsoft.com/edge" target="_blank">Edge</a> ' +
+                    'để nạp code vào Yolo:Bit.</span>';
+                block.appendChild(banner);
+            }
 
-            // Board column
-            const boardEl = createBoardElement(block.dataset);
-            simContainer.appendChild(boardEl);
+            // Serial Terminal
+            let terminalEl = null;
+            let terminalContent = null;
+            let statusDot = null;
+            let dataCallbackId = null;
+            let statusCallbackId = null;
 
-            block.appendChild(simContainer);
+            if (webSerialSupported) {
+                terminalEl = document.createElement("div");
+                terminalEl.className = "serial-terminal";
+                terminalEl.innerHTML =
+                    '<div class="serial-terminal-header">' +
+                    '  <div class="terminal-title">' +
+                    '    <div class="status-dot"></div>' +
+                    '    <span>Serial Monitor</span>' +
+                    '  </div>' +
+                    '  <div class="terminal-actions">' +
+                    '    <button class="btn-terminal-clear" title="Xóa output">Clear</button>' +
+                    '    <button class="btn-terminal-disconnect" title="Ngắt kết nối">Disconnect</button>' +
+                    '  </div>' +
+                    '</div>' +
+                    '<div class="serial-terminal-content"></div>';
+                block.appendChild(terminalEl);
 
-            // ── Event Listeners ──────────────────────────────────────────
-            const btnRun = toolbar.querySelector(".btn-run-code");
-            const btnReset = toolbar.querySelector(".btn-reset-code");
-            const outputContent = outputPanel.querySelector(".output-content");
-            const outputStatus = outputPanel.querySelector(".output-status");
+                terminalContent = terminalEl.querySelector(".serial-terminal-content");
+                statusDot = terminalEl.querySelector(".status-dot");
 
-            let isRunning = false;
-            let runTimeout = null;
+                // Terminal Clear button
+                terminalEl.querySelector(".btn-terminal-clear").addEventListener("click", function () {
+                    terminalContent.textContent = "";
+                });
 
-            async function executeUserCode(isAuto = false) {
-                if (isRunning) return;
-                const code = textarea.value.trim();
-                if (!code) return;
+                // Terminal Disconnect button
+                terminalEl.querySelector(".btn-terminal-disconnect").addEventListener("click", function () {
+                    SerialManager.disconnect();
+                });
+            }
 
-                isRunning = true;
-                btnRun.classList.add("running");
-                btnRun.innerHTML = "⏳ " + (isAuto ? "Auto..." : "Running...");
-                simContainer.style.display = "flex";
-                if (!isAuto) {
-                    outputContent.textContent = "Đang chạy...";
-                    outputContent.className = "output-content";
-                    outputStatus.textContent = "";
-                    outputStatus.className = "output-status";
+            // ── Helper: append text to terminal ─────────────────────
+            function appendToTerminal(text, className) {
+                if (!terminalContent) return;
+                if (className) {
+                    const span = document.createElement("span");
+                    span.className = className;
+                    span.textContent = text;
+                    terminalContent.appendChild(span);
+                } else {
+                    terminalContent.appendChild(document.createTextNode(text));
                 }
-                resetBoardVisuals(boardEl);
+                // Auto-scroll + limit buffer
+                terminalContent.scrollTop = terminalContent.scrollHeight;
+                while (terminalContent.childNodes.length > 1000) {
+                    terminalContent.removeChild(terminalContent.firstChild);
+                }
+            }
 
-                try {
-                    const boardState = getBoardState(boardEl);
-                    const result = await runPythonCode(code, boardState);
-
-                    outputContent.textContent = result.output;
-                    if (result.error) {
-                        outputContent.classList.add("error");
-                        outputStatus.textContent = "Error";
-                        outputStatus.classList.add("error");
-                        outputStatus.classList.remove("success");
-                    } else {
-                        outputContent.classList.remove("error");
-                        outputStatus.textContent = "Success";
-                        outputStatus.classList.add("success");
-                        outputStatus.classList.remove("error");
+            // ── Register serial callbacks ───────────────────────────
+            if (webSerialSupported) {
+                dataCallbackId = SerialManager.onData(function (text) {
+                    // Only append if this terminal is visible
+                    if (terminalEl.classList.contains("visible")) {
+                        appendToTerminal(text);
                     }
+                });
 
-                    // Push state to visual board
-                    const pyodide = await ensurePyodide();
-                    updateBoardVisuals(boardEl, pyodide);
-                } catch (err) {
-                    outputContent.textContent = "Lỗi: Không thể khởi tạo Python runtime.\n" + String(err);
-                    outputContent.classList.add("error");
-                    outputStatus.textContent = "Error";
-                    outputStatus.classList.add("error");
-                    outputStatus.classList.remove("success");
-                } finally {
-                    btnRun.classList.remove("running");
-                    btnRun.innerHTML = "▶ Run";
-                    isRunning = false;
-                }
+                statusCallbackId = SerialManager.onStatus(function (status, detail) {
+                    if (!statusDot) return;
+                    statusDot.classList.remove("connected", "error");
+                    if (status === "connected") {
+                        statusDot.classList.add("connected");
+                        appendToTerminal("[✓] Đã kết nối board\n", "serial-success");
+                    } else if (status === "disconnected") {
+                        appendToTerminal("[✗] Đã ngắt kết nối\n", "serial-info");
+                    } else if (status === "error") {
+                        statusDot.classList.add("error");
+                        appendToTerminal("[!] Lỗi: " + (detail || "Unknown") + "\n", "serial-error");
+                    }
+                });
             }
 
-            btnRun.addEventListener("click", () => executeUserCode(false));
+            // ── Event Listeners ─────────────────────────────────────
+            const btnCopy = toolbar.querySelector(".btn-copy-code");
+            const btnReset = toolbar.querySelector(".btn-reset-code");
+            const btnREPL = toolbar.querySelector(".btn-import-repl");
+            const btnMain = toolbar.querySelector(".btn-import-main");
+            const btnMonitor = toolbar.querySelector(".btn-monitor");
 
-            function scheduleAutoRun() {
-                // If code is empty or has not been run at least once manually, don't auto-run to avoid spam
-                if (!textarea.value.trim() || simContainer.style.display === "none") return;
-                if (runTimeout) clearTimeout(runTimeout);
-                runTimeout = setTimeout(() => { executeUserCode(true); }, 250);
-            }
-
-            // Bind slider auto-run
-            boardEl.querySelectorAll(".yolo-sensor-slider").forEach(sl => {
-                sl.addEventListener("change", scheduleAutoRun); // Run immediately on stop drag
-                sl.addEventListener("input", scheduleAutoRun);  // And also Run debounced during drag
+            // Copy
+            btnCopy.addEventListener("click", function () {
+                navigator.clipboard.writeText(textarea.value).then(function () {
+                    btnCopy.innerHTML = "✅ Copied!";
+                    btnCopy.classList.add("copied");
+                    setTimeout(function () {
+                        btnCopy.innerHTML = "📋 Copy";
+                        btnCopy.classList.remove("copied");
+                    }, 2000);
+                });
             });
-            
-            // Bind hardware buttons auto-run
-            boardEl.querySelectorAll(".yolo-hw-btn").forEach(btn => {
-                btn.addEventListener("click", scheduleAutoRun);
-            });
 
+            // Reset
             btnReset.addEventListener("click", function () {
                 textarea.value = originalCode;
                 textarea.rows = Math.max(4, originalCode.split("\n").length);
-                simContainer.style.display = "none";
-                resetBoardVisuals(boardEl);
             });
+
+            // Import via REPL
+            if (btnREPL) {
+                btnREPL.addEventListener("click", async function () {
+                    const code = textarea.value.trim();
+                    if (!code) return;
+
+                    // Show monitor automatically
+                    if (terminalEl && !terminalEl.classList.contains("visible")) {
+                        terminalEl.classList.add("visible");
+                        if (btnMonitor) btnMonitor.classList.add("active");
+                    }
+
+                    btnREPL.classList.add("uploading");
+                    btnREPL.innerHTML = "⏳ Đang nạp...";
+                    progressEl.classList.add("active");
+
+                    appendToTerminal("\n[→] Nạp code qua REPL...\n", "serial-info");
+
+                    try {
+                        await sendViaREPL(code);
+                        appendToTerminal("[✓] Đã nạp code thành công! (REPL mode)\n", "serial-success");
+                    } catch (err) {
+                        appendToTerminal("[!] Lỗi: " + err.message + "\n", "serial-error");
+                    } finally {
+                        btnREPL.classList.remove("uploading");
+                        btnREPL.innerHTML = "▶ REPL";
+                        progressEl.classList.remove("active");
+                    }
+                });
+            }
+
+            // Import as main.py
+            if (btnMain) {
+                btnMain.addEventListener("click", async function () {
+                    const code = textarea.value.trim();
+                    if (!code) return;
+
+                    // Confirm with user
+                    if (!confirm(
+                        "Ghi code vào main.py trên board?\n\n" +
+                        "Code sẽ tự động chạy mỗi khi bật board.\n" +
+                        "Code cũ trong main.py sẽ bị ghi đè."
+                    )) return;
+
+                    // Show monitor automatically
+                    if (terminalEl && !terminalEl.classList.contains("visible")) {
+                        terminalEl.classList.add("visible");
+                        if (btnMonitor) btnMonitor.classList.add("active");
+                    }
+
+                    btnMain.classList.add("uploading");
+                    btnMain.innerHTML = "⏳ Đang ghi...";
+                    progressEl.classList.add("active");
+
+                    appendToTerminal("\n[→] Ghi code vào main.py...\n", "serial-info");
+
+                    try {
+                        await sendAsMainPy(code);
+                        appendToTerminal("[✓] Đã ghi main.py và reset board!\n", "serial-success");
+                    } catch (err) {
+                        appendToTerminal("[!] Lỗi: " + err.message + "\n", "serial-error");
+                    } finally {
+                        btnMain.classList.remove("uploading");
+                        btnMain.innerHTML = "💾 Main";
+                        progressEl.classList.remove("active");
+                    }
+                });
+            }
+
+            // Toggle Monitor
+            if (btnMonitor) {
+                btnMonitor.addEventListener("click", function () {
+                    if (terminalEl.classList.contains("visible")) {
+                        terminalEl.classList.remove("visible");
+                        btnMonitor.classList.remove("active");
+                    } else {
+                        terminalEl.classList.add("visible");
+                        btnMonitor.classList.add("active");
+                    }
+                });
+            }
         });
     }
 
-    // ── Public API ───────────────────────────────────────────────────────
+
+    // ── Public API ──────────────────────────────────────────────────────
 
     window.YoloFarm = {
         transformCodeBlocks: transformCodeBlocks,
-        runPythonCode: runPythonCode,
+        connect: SerialManager.connect.bind(SerialManager),
+        disconnect: SerialManager.disconnect.bind(SerialManager),
+        isConnected: SerialManager.isConnected.bind(SerialManager),
     };
 })();
